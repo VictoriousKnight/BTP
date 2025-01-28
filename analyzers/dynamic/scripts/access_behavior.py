@@ -1,109 +1,113 @@
 import os
 import re
 import logging
+import argparse
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict
 
-# Setup logging (can be adjusted for centralized logging in production)
+# Setup logging
 logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# Regex patterns for suspicious activity (can be extended with more patterns)
-MALICIOUS_FILE_PATTERN = r"(malicious|key|temp|AppData|Roaming|SysWow64)"
-MALICIOUS_REGISTRY_PATTERN = r"(malicious|run|startup|system|AutoRun)"
+# Dynamic regex patterns for suspicious file paths
+MALICIOUS_FILE_PATTERN = (
+    r"(?i)(?:\b(keylogger|trojan|stealer|rat|botnet|payload|backdoor)\b|"  # Common malware names
+    r"\\(AppData|Local|Roaming|Temp|SysWow64|System32|Startup|ProgramData)\\.*\.(exe|bat|dll|vbs|scr|ps1)$|"  # Suspicious folders + file extensions
+    r"C:\\Users\\[^\\]+\\AppData\\.*\.(exe|bat|dll|vbs|scr|ps1)$)"  # Matches dynamic usernames
+)
+
+# Dynamic regex for suspicious registry keys
+MALICIOUS_REGISTRY_PATTERN = (
+    r"(?i)(?:\\(Run|RunOnce|Startup|AutoRun|Policies\\Explorer)\\|"  # Common persistence keys
+    r"\\(CurrentVersion\\Run|Winlogon|Shell)\\)"
+)
 
 
-# Function to detect suspicious file based on regex
 def is_suspicious_file(file_path: str) -> bool:
-    """
-    Determines if a file path is suspicious based on regex.
-    """
-    return bool(re.search(MALICIOUS_FILE_PATTERN, file_path, re.IGNORECASE))
+    """Determines if a file path is suspicious based on refined regex."""
+    return bool(re.search(MALICIOUS_FILE_PATTERN, file_path))
 
 
-# Function to detect suspicious registry based on regex
 def is_suspicious_registry(registry_key: str) -> bool:
-    """
-    Determines if a registry key is suspicious based on regex.
-    """
-    return bool(re.search(MALICIOUS_REGISTRY_PATTERN, registry_key, re.IGNORECASE))
+    """Determines if a registry key is suspicious based on refined regex."""
+    return bool(re.search(MALICIOUS_REGISTRY_PATTERN, registry_key))
 
 
-# Function to simulate file access and log if suspicious
 def monitor_file_access(file_path: str):
-    """
-    Monitors file access and logs suspicious access based on patterns.
-    """
+    """Monitors file access and logs suspicious activity."""
     try:
-        # Simulate file access (you can replace this with actual logic)
         if is_suspicious_file(file_path):
-            logging.warning(f"Suspicious file accessed: {file_path}")
+            logging.warning(f"🚨 Suspicious file detected: {file_path}")
         else:
-            logging.info(f"File accessed: {file_path}")
+            logging.info(f"✅ File accessed: {file_path}")
     except Exception as e:
-        logging.error(f"Error accessing file {file_path}: {e}")
+        logging.error(f"Error processing file {file_path}: {e}")
 
 
-# Function to simulate registry access and log if suspicious
 def monitor_registry_access(registry_key: str):
-    """
-    Monitors registry access and logs suspicious registry access based on patterns.
-    """
+    """Monitors registry access and logs suspicious activity."""
     try:
-        # Simulate registry access (replace with actual registry access logic if needed)
         if is_suspicious_registry(registry_key):
-            logging.warning(f"Suspicious registry accessed: {registry_key}")
+            logging.warning(f"🚨 Suspicious registry detected: {registry_key}")
         else:
-            logging.info(f"Registry accessed: {registry_key}")
+            logging.info(f"✅ Registry accessed: {registry_key}")
     except Exception as e:
-        logging.error(f"Error accessing registry {registry_key}: {e}")
+        logging.error(f"Error processing registry {registry_key}: {e}")
 
 
-# Function to handle monitoring tasks with ThreadPoolExecutor for concurrency
 def monitor_access_behavior(
     files: List[str], registry_keys: List[str]
 ) -> Dict[str, str]:
-    """
-    Monitors file and registry access concurrently using ThreadPoolExecutor.
-    """
-    results = {"access_logs": []}
-
+    """Monitors file and registry access concurrently using ThreadPoolExecutor."""
     with ThreadPoolExecutor() as executor:
-        futures = []
+        futures = [executor.submit(monitor_file_access, file) for file in files] + [
+            executor.submit(monitor_registry_access, key) for key in registry_keys
+        ]
 
-        # Submit tasks for file access monitoring
-        for file_path in files:
-            futures.append(executor.submit(monitor_file_access, file_path))
-
-        # Submit tasks for registry key access monitoring
-        for registry_key in registry_keys:
-            futures.append(executor.submit(monitor_registry_access, registry_key))
-
-        # Wait for all tasks to complete
         for future in futures:
-            future.result()  # Collect the results or handle exceptions
+            future.result()  # Wait for all tasks to complete
 
-    results["status"] = "completed"
-    return results
+    return {"status": "completed"}
 
 
-# Example usage of the monitoring function
-if __name__ == "__main__":
-    # List of files and registry keys to monitor
-    files_to_monitor = [
-        "C:\\Users\\Admin\\AppData\\Roaming\\malicious_file.exe",
-        "C:\\Windows\\System32\\drivers\\etc\\hosts",
-        "C:\\temp\\config.txt",
-        "C:\\ProgramData\\App\\settings.ini",
+def main():
+    """Generalized main function that accepts command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Monitor files and registry keys for suspicious activity."
+    )
+    parser.add_argument(
+        "--files", nargs="*", default=[], help="List of file paths to monitor."
+    )
+    parser.add_argument(
+        "--registry", nargs="*", default=[], help="List of registry keys to monitor."
+    )
+
+    args = parser.parse_args()
+
+    # Use provided input or fallback to defaults
+    files_to_monitor = args.files or [
+        os.path.expandvars(
+            r"%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\evil.exe"
+        ),
+        os.path.expandvars(r"%LOCALAPPDATA%\Temp\rat.exe"),
+        os.path.expandvars(r"%WINDIR%\System32\malware.dll"),
+        os.path.expandvars(r"%PROGRAMDATA%\App\update.bat"),
     ]
 
-    registry_keys_to_monitor = [
-        "HKLM\\Software\\MaliciousKey",
-        "HKCU\\Software\\MyApp\\Settings",
-        "HKCU\\Software\\Microsoft\\Windows\\Run\\malicious_app",
-        "HKLM\\Software\\System\\AutoRun",
+    registry_keys_to_monitor = args.registry or [
+        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run\hidden_payload",
+        r"HKLM\Software\Microsoft\Windows\CurrentVersion\Run\stealth_key",
+        r"HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce\backdoor",
+        r"HKLM\Software\Microsoft\Windows NT\CurrentVersion\Winlogon\Shell",
     ]
 
+    logging.info(
+        f"Starting monitoring for {len(files_to_monitor)} files and {len(registry_keys_to_monitor)} registry keys."
+    )
     result = monitor_access_behavior(files_to_monitor, registry_keys_to_monitor)
     logging.info(f"Monitoring completed with status: {result['status']}")
+
+
+if __name__ == "__main__":
+    main()
